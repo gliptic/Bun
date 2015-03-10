@@ -14,10 +14,9 @@
     {
         // Containing blobs
         private Dictionary<Blob, Blob> containingBlobLookup = new Dictionary<Blob, Blob>();
-        private Action init;
         private volatile bool isInitialized = false;
         
-        public const string BunPrefix = "bun/";
+        public readonly string BunPrefix = "bun/";
 
         protected Dictionary<Blob, string> blobPaths = new Dictionary<Blob, string>();
         protected BunStore store;
@@ -34,13 +33,6 @@
         
         public void Init(Action init)
         {
-            this.init = init;
-            
-            // TODO: Set watch before init and queue up changes. Check changes afterwards to verify no
-            // involved files were changed.
-
-            this.EnsureInit();
-            
 #if false
             watcher = new FileSystemWatcher(HostingEnvironment.MapPath("~/"));
             watcher.Changed += (sender, e) =>
@@ -74,7 +66,6 @@
                 Trace.WriteLine("Re-init");
 
                 isInitialized = true; // Before init() to avoid re-entry
-                init();
 
 #if false
                 var paths = store.Values
@@ -120,7 +111,7 @@
 
         public Blob Store(Blob blob)
         {
-            return this.Store(blob.OriginalVirtualPath, blob);
+            return this.Store(blob.OriginalVirtualPathMaybe, blob);
         }
 
         public void Store(IEnumerable<Blob> blobs)
@@ -130,7 +121,7 @@
                 this.Store(blob);
             }
         }
-                
+
         public string GetBlobPath(Blob blob, string basePath)
         {
             string blobPath = this.blobPaths[blob];
@@ -147,36 +138,42 @@
             return containingBlob;
         }
 
-        public Blob GenerateFileMappingFunction()
+        public Blob GenerateFileMappingFunction(IEnumerable<string> ignoredVirtualPathsList)
         {
             var builder = new StringBuilder();
+            var ignoredVirtualPaths = new HashSet<string>(ignoredVirtualPathsList);
 
             builder.Append("!function () { \n");
-            builder.Append("  var m = {\n");
+            builder.Append("  var suffixes = {\n");
 
             foreach (var blob in this.blobPaths)
             {
-                try
+                var virtualPath = blob.Key.OriginalVirtualPathMaybe;
+                var newVirtualPath = blob.Value;
+
+                if (virtualPath != null
+                 && virtualPath == newVirtualPath // Only include files that aren't renamed.
+                 && virtualPath.Contains('.') // They must include a dot to be routable anyway
+                 && !ignoredVirtualPaths.Contains(virtualPath))
                 {
-                    var virtualPath = blob.Key.OriginalVirtualPath;
                     builder.Append("    '");
-                    builder.Append(virtualPath);
+                    builder.Append(this.store.NormalizeCase(virtualPath));
                     builder.Append("': '");
-                    // TODO: We don't need to add the bun/ prefix to every entry. We should
-                    // split GetBlobPath up a bit so that we can get the path without the prefix.
-                    builder.Append(this.GetBlobPath(blob.Key, ""));
-                    builder.Append("'\n");
-                }
-                catch (ApplicationException)
-                {
-                    // TODO: Do this is a nicer way
+
+                    //builder.Append(this.GetBlobPath(blob.Key, ""));
+                    builder.Append(blob.Key.Suffix);
+                    builder.Append("',\n");
                 }
             }
             builder.Append("  };\n");
-            builder.Append("  function mapPath(path) {\n");
-            builder.Append("    return m[path] || path;\n");
-            builder.Append("  }\n");
-            builder.Append("  this.mapPath = mapPath;\n");
+            builder.Append("  this.mapPath = function (path) {\n");
+            builder.Append("    var s = suffixes[path" + (this.store.CaseSensitive ? string.Empty : ".toLowerCase()") + "], i;\n");
+            builder.Append("    if (s) {\n");
+            builder.Append("      i = path.lastIndexOf('.');\n");
+            builder.Append("      return '" + this.BunPrefix + "' + path.substr(0, i) + '$' + s + path.substr(i);\n");
+            builder.Append("    }\n");
+            builder.Append("    return path;\n");
+            builder.Append("  };\n");
             builder.Append("}.call(this);\n");
 
             return new StringBlob(builder.ToString(), FileBlob.MimeJavaScript);

@@ -45,27 +45,42 @@
 
         public void WriteTo(StringBuilder dest)
         {
-            dest.Append(this.ToString());
+            dest.Append(this.String);
         }
 
         public string MimeType { get { return this.mimeType; } }
         public IEnumerable<Blob> SubBlobs { get { return this.subBlobs; } }
         public int Leaves { get { return this.leaves; } }
 
-        public virtual string VirtualPath
+        public string VirtualPath
         {
             get
             {
-                throw new ApplicationException("This blob has no virtual path");
+                var v = this.VirtualPathMaybe;
+                if (v == null) throw new ApplicationException("This blob has no virtual path");
+                return v;
             }
         }
 
-        public virtual string OriginalVirtualPath
+        public virtual string VirtualPathMaybe
+        {
+            // Default to none
+            get { return null; }
+        }
+
+        public string OriginalVirtualPath
         {
             get
             {
-                return this.VirtualPath;
+                var v = this.OriginalVirtualPathMaybe;
+                if (v == null) throw new ApplicationException("This blob has no original virtual path");
+                return v;
             }
+        }
+
+        public virtual string OriginalVirtualPathMaybe
+        {
+            get { return this.VirtualPathMaybe; }
         }
         
         public string Suffix
@@ -79,7 +94,7 @@
                     {
                         // SHA1 is OK because we don't need protection against attacks
                         var sha1 = new SHA1CryptoServiceProvider();
-                        var data = this.ToArray();
+                        var data = this.Array;
 
                         Trace.WriteLine("Hashing " + data.Length + " bytes");
                 
@@ -106,7 +121,7 @@
                     lock (this)
                     if (this.gzipData == null) // Someone else might have filled it while we were waiting to lock
                     {
-                        var data = this.ToArray();
+                        var data = this.Array;
 
                         using (var resultStream = new MemoryStream())
                         {
@@ -126,48 +141,54 @@
             }
         }
 
-        public new string ToString() // TODO: Different name?
+        public string String
         {
-            if (this.strData == null)
+            get
             {
-                lock (this)
                 if (this.strData == null)
                 {
-                    if (this.data != null)
+                    lock (this)
+                    if (this.strData == null)
                     {
-                        Trace.WriteLine("Converting " + this.data.Length + " bytes to chars");
-                        this.strData = Utf8.GetString(this.data);
-                    }
-                    else
-                    {
-                        this.strData = this.ToStringImpl();
+                        if (this.data != null)
+                        {
+                            Trace.WriteLine("Converting " + this.data.Length + " bytes to chars");
+                            this.strData = Utf8.GetString(this.data);
+                        }
+                        else
+                        {
+                            this.strData = this.ToStringImpl();
+                        }
                     }
                 }
-            }
             
-            return this.strData;
+                return this.strData;
+            }
         }
 
-        public byte[] ToArray()
+        public byte[] Array
         {
-            if (this.data == null)
+            get
             {
-                lock (this)
                 if (this.data == null)
                 {
-                    if (this.strData != null)
+                    lock (this)
+                    if (this.data == null)
                     {
-                        Trace.WriteLine("Converting " + this.strData.Length + " chars to bytes");
-                        this.data = Utf8.GetBytes(this.strData);
-                    }
-                    else
-                    {
-                        this.data = this.ToArrayImpl();
+                        if (this.strData != null)
+                        {
+                            Trace.WriteLine("Converting " + this.strData.Length + " chars to bytes");
+                            this.data = Utf8.GetBytes(this.strData);
+                        }
+                        else
+                        {
+                            this.data = this.ToArrayImpl();
+                        }
                     }
                 }
-            }
             
-            return this.data;
+                return this.data;
+            }
         }
 
         // NOTE: Either ToStringImpl() or ToArrayImpl() MUST be overridden.
@@ -191,8 +212,6 @@
         {
             return new ConcatBlob(blobs);
         }
-
-        
     }
 
     public class ConcatBlob : Blob
@@ -228,7 +247,7 @@
 
                 first = false;
 
-                builder.Append(child.ToString());
+                builder.Append(child.String);
             }
 
             return builder.ToString();
@@ -237,11 +256,12 @@
         protected override byte[] ToArrayImpl()
         {
             Trace.WriteLine("Concatenating " + this.children.Length.ToString() + " blobs to array");
+
             var arrays = new List<byte[]>();
 
             foreach (var child in this.children)
             {
-                arrays.Add(child.ToArray());
+                arrays.Add(child.Array);
             }
 
             var totalSize = arrays.Sum(a => a.Length) + (arrays.Count - 1) * 2;
@@ -301,9 +321,9 @@
             this.source = source;
         }
 
-        public override string OriginalVirtualPath
+        public override string OriginalVirtualPathMaybe
         {
-            get { return this.source.VirtualPath; }
+            get { return this.source.VirtualPathMaybe; }
         }
     }
 
@@ -316,13 +336,13 @@
 
         protected override string ToStringImpl()
         {
-            var r = this.source.ToString();
+            var r = this.source.String;
             return r;
         }
 
         protected override byte[] ToArrayImpl()
         {
-            var r = this.source.ToArray();
+            var r = this.source.Array;
             return r;
         }
     }
@@ -360,7 +380,7 @@
             this.virtualPath = virtualPath;
         }
 
-        public override string VirtualPath
+        public override string VirtualPathMaybe
         {
             get { return this.virtualPath; }
         }

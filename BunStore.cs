@@ -9,49 +9,41 @@
 
     public class BunStore
     {
-        public static BunStore Instance = new BunStore();
+        public static Lazy<BunStore> Instance;
 
-        private ReaderWriterLockSlim _lock = new ReaderWriterLockSlim(LockRecursionPolicy.SupportsRecursion);
         private Dictionary<string, Blob> store = new Dictionary<string, Blob>();
+        public readonly bool CaseSensitive = false;
+
+        // NOTE: This should only be used for dictionary keys and values
+        // compared to dictionary keys.
+        public string NormalizeCase(string str)
+        {
+            if (this.CaseSensitive)
+                return str;
+            return str.ToLowerInvariant();
+        }
         
         public Blob Store(string blobPath, Blob blob)
         {
-            _lock.EnterWriteLock();
-
-            try
-            {
-                store.Add(blobPath, blob);
-
-                return blob;
-            }
-            finally
-            {
-                _lock.ExitWriteLock();
-            }
+            string key = this.NormalizeCase(blobPath);
+            store.Add(key, blob);
+            return blob;
         }
 
         public Blob Resolve(string blobPath)
         {
-            _lock.EnterReadLock();
-
-            try
-            {
-                Blob result;
-                store.TryGetValue(blobPath, out result);
-                return result;
-            }
-            finally
-            {
-                _lock.ExitReadLock();
-            }
+            Blob result;
+            string key = this.NormalizeCase(blobPath);
+            store.TryGetValue(key, out result);
+            return result;
         }
 
         public HtmlString IncludeBlob(string blobPath)
         {
             var blob = this.Resolve(blobPath);
-            //Debug.Assert(blob.MimeType == FileBlob.MimeHtml); // TEMP
+            Debug.Assert(blob.MimeType == FileBlob.MimeHtml);
 
-            return new HtmlString(blob.ToString());
+            return new HtmlString(blob.String);
         }
     }
 }

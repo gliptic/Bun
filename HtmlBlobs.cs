@@ -31,7 +31,7 @@
             else
             {
                 // TODO: Escape </
-                var r = "<script type=\"text/javascript\">\n" + this.scriptBody.ToString() + "</script>";
+                var r = "<script type=\"text/javascript\">\n" + this.scriptBody.String + "</script>";
                 this.scriptBody = null;
                 return r;
             }
@@ -44,8 +44,13 @@
         {
             private Regex patterns;
             private IBlobResolver blobResolver;
+            private int sizeLimit;
 
-            public InlineSrcBlob(Blob source, IBlobResolver blobResolver, string pattern)
+            public InlineSrcBlob(
+                Blob source,
+                IBlobResolver blobResolver,
+                string pattern,
+                int sizeLimit = 4096)
             : base(source)
             {
                 Debug.Assert(this.source.MimeType == FileBlob.MimeHtml
@@ -56,11 +61,12 @@
 
                 this.patterns = new Regex("^(?:" + regexStr + ")$", RegexOptions.CultureInvariant);
                 this.blobResolver = blobResolver;
+                this.sizeLimit = sizeLimit;
             }
 
             protected override string ToStringImpl()
             {
-                var text = this.source.ToString();
+                var text = this.source.String;
                 var result = new StringBuilder();
                 int prevEnd = 0;
 
@@ -93,14 +99,19 @@
                     if (!url.Contains("//") // Must be relative URL
                       && this.patterns.IsMatch(url))
                     {
-                        var trans = blobResolver.GetTransformedFile(url).DataUrl();
+                        var file = blobResolver.GetTransformedFile(url);
 
-                        writeUpTo(m.Groups[1].Index, m.Groups[1].Length);
+                        if (file.Array.Length <= sizeLimit)
+                        {
+                            var trans = file.DataUrl();
 
-                        result.Append(trans.ToString());
+                            writeUpTo(m.Groups[1].Index, m.Groups[1].Length);
+
+                            result.Append(trans.String);
+                        }
                     }
                 }
-
+                
                 // Write rest
                 writeUpTo(text.Length, 0);
 

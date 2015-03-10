@@ -63,7 +63,7 @@ namespace LabWeb.Bun
 
             if (includeRequireJsBlob != null)
             {
-                dest.Append(includeRequireJsBlob.ToString());
+                dest.Append(includeRequireJsBlob.String);
                 dest.Append("\n");
             }
 
@@ -190,7 +190,7 @@ namespace LabWeb.Bun
                         if (flattened.Contains(moduleName))
                             return; // SKIP since we already have this flattened.
 
-                        var strData = blob.ToString();
+                        var strData = blob.String;
 
                         var defineParse = defineRegex.Match(strData);
 
@@ -282,13 +282,17 @@ namespace LabWeb.Bun
                     includeRequireJsBlob: requireJsBlob,
                     exclude: seen));
 
-                // TODO: Exclude mappings that can be found in the require.js mapping
-                nonAmdBlobs.Add(bun.GenerateFileMappingFunction());
+                // Exclude mappings that can be found in the require.js mapping already
+                nonAmdBlobs.Add(bun.GenerateFileMappingFunction(
+                    this.mapping
+                        .Select(kv => kv.Value.OriginalVirtualPathMaybe)
+                        .Where(p => p != null)));
                 
                 var blob = Blob.Concat(nonAmdBlobs.Concat(amdBlobs).ToArray());
                 bun.Store(blobPath, blob);
                         
-                // TODO: This depends on a base path, but not necessarily "basePath"
+                // TODO: This depends on the HTML base path relative to the virtual path hierarchy, which isn't the same as 'basePath'.
+                // We assume it's "" for now.
                 return new ScriptTagBlob(bun.GetBlobPath(blob, ""));
             }
             else

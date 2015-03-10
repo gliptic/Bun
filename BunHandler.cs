@@ -34,7 +34,7 @@ namespace LabWeb.Bun
             bool hasVersion = pathMatches.Groups[3].Success;
             var version = pathMatches.Groups[3].Value;
 
-            Blob blob = BunStore.Instance.Resolve(p);
+            Blob blob = BunStore.Instance.Value.Resolve(p);
             if (blob == null)
             {
                 resp.StatusCode = 404;
@@ -102,13 +102,11 @@ namespace LabWeb.Bun
             }
 
             response.ContentType = blob.MimeType;
-            response.BinaryWrite(blob.ToArray());
+            response.BinaryWrite(blob.Array);
         }
 
         public bool IsReusable
         {
-            // To enable pooling, return true here.
-            // This keeps the handler in memory.
             get { return true; }
         }
     }

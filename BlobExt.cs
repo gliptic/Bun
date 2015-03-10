@@ -19,7 +19,7 @@ namespace LabWeb.Bun
             protected override string ToStringImpl()
             {
                 var min = new Microsoft.Ajax.Utilities.Minifier();
-                var str = this.source.ToString();
+                var str = this.source.String;
                 Trace.WriteLine("Minifying " + str.Length.ToString() + " chars of JavaScript");
                 var r = min.MinifyJavaScript(str);
                 return r;
@@ -37,7 +37,7 @@ namespace LabWeb.Bun
             protected override string ToStringImpl()
             {
                 var min = new Microsoft.Ajax.Utilities.Minifier();
-                var str = this.source.ToString();
+                var str = this.source.String;
                 Trace.WriteLine("Minifying " + str.Length.ToString() + " chars of CSS");
                 var r = min.MinifyStyleSheet(str);
                 return r;
@@ -54,7 +54,7 @@ namespace LabWeb.Bun
 
             protected override string ToStringImpl()
             {
-                var url = "data:" + this.source.MimeType + ";base64," + Convert.ToBase64String(this.source.ToArray());
+                var url = "data:" + this.source.MimeType + ";base64," + Convert.ToBase64String(this.source.Array);
                 this.source = null;
                 return url;
             }

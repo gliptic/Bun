@@ -17,8 +17,7 @@
 
         public Blob GetFile(string virtualPath)
         {
-            // Lower-case for case-insensitivity
-            string key = virtualPath.ToLowerInvariant();
+            string key = store.NormalizeCase(virtualPath);
 
             FileBlob blob;
             if (accessed.TryGetValue(key, out blob))
