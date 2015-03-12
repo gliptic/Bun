@@ -22,11 +22,32 @@ namespace LabWeb.Bun
     public class RequireBuilder
     {
         private BunBuilder bun;
-        private Dictionary<string, Blob> mapping;
+        private Dictionary<string, Blob> mapping; // TODO: Store mapping as string -> BlobNode
         private Dictionary<string, Shim> shims;
 
-        private HashSet<string> flattened = new HashSet<string>();
+        //private HashSet<string> flattened = new HashSet<string>();
         private Regex defineRegex;
+
+        private Dictionary<Blob, BlobNode> blobNodes = new Dictionary<Blob, BlobNode>();
+
+        public class BlobNode
+        {
+            public BlobNode(Blob blob, bool isAmd, int namePos, string moduleName)
+            {
+                this.Blob = blob;
+                this.ModuleName = null;
+                this.IsAmd = isAmd;
+                this.NamePos = namePos;
+                this.ModuleName = moduleName;
+            }
+
+            public Blob Blob;
+            public string ModuleName;
+            public readonly bool IsAmd;
+            public readonly int NamePos; // Position where name would be added
+            public readonly List<BlobNode> Dependencies = new List<BlobNode>();
+            public bool Flattened = false;
+        }
 
         public RequireBuilder(
             BunBuilder bun,
@@ -37,11 +58,13 @@ namespace LabWeb.Bun
             this.bun = bun;
             this.mapping = mapping;
             this.shims = shims;
+            /* TODO: Handle neverFlatten
             if (neverFlatten != null)
             {
                 // Pretend they are already flattened
                 this.flattened = new HashSet<string>(neverFlatten);
             }
+            */
 
             var ws = @"\s*";
             var quote = "[\"']";
@@ -52,6 +75,136 @@ namespace LabWeb.Bun
                     + ws + @"\[(.*?)\]"
                     + ws + ",",
                     RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+            // Parse everything in mapping
+            // TODO: Have a CreateNode that creates a node with a context name. GetNode should not create nodes.
+            foreach (var m in mapping)
+            {
+                var node = this.GetNode(m.Value, m.Key);
+                if (neverFlatten != null)
+                    node.Flattened = neverFlatten.Contains(node.ModuleName);
+            }
+        }
+
+        private static string UnifyModuleNames(string currentName, string newName)
+        {
+            if (currentName == null)
+                return newName;
+            else if (newName == null || newName == currentName)
+                return currentName;
+            else
+                throw new ApplicationException("Module referred to as '" + newName + "' has the name '" + currentName + "' elsewhere.");
+        }
+
+        public BlobNode GetNode(string name)
+        {
+            Blob blob;
+            if (!this.mapping.TryGetValue(name, out blob))
+            {
+                throw new ApplicationException("Module '" + name + "' is missing from mapping but used as a dependency");
+            }
+
+            return this.GetNode(blob, name);
+        }
+
+        public BlobNode GetNode(Blob blob, string nameInContext = null)
+        {
+            BlobNode node;
+            if (!this.blobNodes.TryGetValue(blob.OriginalBlob, out node))
+            {
+                //
+
+                var strData = blob.String;
+                var defineParse = defineRegex.Match(strData);
+
+                bool isAmd = false;
+                int namePos = -1;
+                string moduleName = nameInContext;
+
+                if (defineParse.Success)
+                {
+                    isAmd = true;
+
+                    if (defineParse.Groups[2].Success)
+                    {
+                        string nameInBlob = defineParse.Groups[2].Value;
+
+                        moduleName = UnifyModuleNames(nameInBlob, moduleName);
+                    }
+                    else
+                    {
+                        // If the bundle does not have a name, give it one.
+                        namePos = defineParse.Groups[1].Index;
+
+                        
+                    }
+                }
+
+                node = new BlobNode(blob, isAmd, namePos, moduleName);
+                this.blobNodes[blob] = node; // Add first to handle cycles
+
+                // TODO: What if we don't have a module name yet?
+                Shim shim;
+                if (this.shims.TryGetValue(node.ModuleName, out shim))
+                {
+                    node.Dependencies.AddRange(shim.deps.Select(d => this.GetNode(d)));
+                }
+
+                if (defineParse.Success)
+                {
+                    foreach (var dep in defineParse.Groups[3].Value.Split(new[]{','}, StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        var n = dep.Trim();
+                        var name = n.Substring(1, n.Length - 2); // Remove quotes
+
+                        // Ignore built-in modules
+                        if (name != "require" && name != "exports")
+                        {
+                            node.Dependencies.Add(this.GetNode(name));
+                        }
+                    }
+                }
+            }
+            else
+            {
+                node.ModuleName = UnifyModuleNames(node.ModuleName, nameInContext);
+            }
+
+            return node;
+        }
+
+        public Blob BlobWithName(BlobNode node)
+        {
+            if (node.IsAmd)
+            {
+                var strData = node.Blob.String;
+
+                // TODO: This loses the connection with the original blob. Is it needed ever?
+                return new StringBlob(
+                    strData.Substring(0, node.NamePos) + '"' + node.ModuleName + "\", " + strData.Substring(node.NamePos),
+                    node.Blob.MimeType); 
+            }
+            else
+            {
+                return node.Blob;
+            }
+        }
+
+        protected void TraverseModuleTree(
+            BlobNode node,
+            HashSet<BlobNode> seen,
+            Action<BlobNode> visitor)
+        {
+            if (seen.Contains(node))
+                return;
+
+            visitor(node);
+            seen.Add(node);
+
+            foreach (var dep in node.Dependencies)
+            {
+                TraverseModuleTree(dep, seen, visitor);
+            }
         }
         
         public Blob GenerateRequireJsMapping(
@@ -148,107 +301,34 @@ namespace LabWeb.Bun
             return blob;
         }
 
-        protected void TraverseModuleTree(
-            string moduleName,
-            HashSet<string> seen,
-            Action<string, Blob, Action<string[]>> visitor)
+        protected HashSet<BlobNode> FlattenModules(string[] modules, List<Blob> nonAmdBlobs, List<Blob> amdBlobs, bool addName)
         {
-            if (seen.Contains(moduleName))
-                return;
-
-            Blob blob = LookupRequireModule(moduleName);
-            if (blob == null)
-            {
-                throw new ApplicationException("Essential module '" + moduleName + "' is either not in mapping or has no stored blob");
-            }
-            
-            visitor(moduleName, blob, deps =>
-            {
-                seen.Add(moduleName);
-                foreach (var dep in deps)
-                {
-                    TraverseModuleTree(dep, seen, visitor);
-                }
-            });
-        }
-        
-        protected HashSet<string> FlattenModules(string[] modules, List<Blob> nonAmdBlobs, List<Blob> amdBlobs, bool addName)
-        {
-            var seen = new HashSet<string>();
-
-            // Default modules
-            seen.Add("exports");
-            seen.Add("require");
+            var seen = new HashSet<BlobNode>();
 
             foreach (var m in modules)
             {
+                var node = this.GetNode(m);
+
                 TraverseModuleTree(
-                    m,
+                    node,
                     seen: seen,
-                    visitor: (moduleName, blob, visitChildren) =>
+                    visitor: n =>
                     {
-                        if (flattened.Contains(moduleName))
+                        if (n.Flattened)
                             return; // SKIP since we already have this flattened.
 
-                        var strData = blob.String;
-
-                        var defineParse = defineRegex.Match(strData);
-
-                        bool isAmd = false;
-
-                        if (defineParse.Success)
-                        {
-                            isAmd = true;
-
-                            if (defineParse.Groups[2].Success)
-                            {
-                                string nameInBlob = defineParse.Groups[2].Value;
-
-                                if (nameInBlob != moduleName)
-                                {
-                                    throw new ApplicationException("Module referred to as '" + moduleName + "' has the wrong name in file");
-                                }
-                            }
-                            else if (addName)
-                            {
-                                // If the bundle does not have a name, give it one.
-                                var namePos = defineParse.Groups[1].Index;
-                                blob = new StringBlob(
-                                    strData.Substring(0, namePos) + '"' + moduleName + "\", " + strData.Substring(namePos),
-                                    blob.MimeType);
-                            }
-                        }
-
-                        flattened.Add(moduleName);
-
-                        var deps = new List<string>();
-
-                        Shim shim;
-                        if (this.shims.TryGetValue(moduleName, out shim))
-                        {
-                            deps.AddRange(shim.deps);
-                        }
-
-                        if (defineParse.Success)
-                        {
-                            deps.AddRange(defineParse.Groups[3].Value.Split(new[]{','}, StringSplitOptions.RemoveEmptyEntries).Select(x => {
-                                var n = x.Trim();
-                                return n.Substring(1, n.Length - 2); // Remove quotes
-                            }));
-                        }
-                    
-                        visitChildren(deps.ToArray());
-
-                        if (isAmd)
-                            amdBlobs.Add(blob);
+                        if (n.IsAmd)
+                            amdBlobs.Add(addName ? this.BlobWithName(n) : n.Blob);
                         else
-                            nonAmdBlobs.Add(blob);
+                            nonAmdBlobs.Add(n.Blob);
+
+                        n.Flattened = true;
                     });
             }
 
             return seen;
         }
-
+        
         public Blob CombineModules(string[] modules)
         {
             var bundles = new List<Blob>();
@@ -280,7 +360,7 @@ namespace LabWeb.Bun
                 nonAmdBlobs.Add(this.GenerateRequireJsMapping(
                     basePath,
                     includeRequireJsBlob: requireJsBlob,
-                    exclude: seen));
+                    exclude: new HashSet<string>(seen.Select(n => n.ModuleName))));
 
                 // Exclude mappings that can be found in the require.js mapping already
                 nonAmdBlobs.Add(bun.GenerateFileMappingFunction(

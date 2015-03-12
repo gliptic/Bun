@@ -78,9 +78,14 @@
             }
         }
 
-        public virtual string OriginalVirtualPathMaybe
+        public virtual Blob OriginalBlob
         {
-            get { return this.VirtualPathMaybe; }
+            get { return this; }
+        }
+
+        public string OriginalVirtualPathMaybe
+        {
+            get { return this.OriginalBlob.VirtualPathMaybe; }
         }
         
         public string Suffix
@@ -321,9 +326,9 @@
             this.source = source;
         }
 
-        public override string OriginalVirtualPathMaybe
+        public override Blob OriginalBlob
         {
-            get { return this.source.VirtualPathMaybe; }
+            get { return this.source.OriginalBlob; }
         }
     }
 
